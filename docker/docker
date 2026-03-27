@@ -1,0 +1,306 @@
+version: "3.9"
+
+networks:
+  oil-net:
+    driver: bridge
+
+volumes:
+  timescale-data:
+  redis-data:
+  minio-data:
+  grafana-data:
+  flink-checkpoints:
+  zookeeper-data:
+  kafka-data:
+
+services:
+
+  # ─────────────────────────────────────────────
+  # KAFKA (KRaft mode — no ZooKeeper)
+  # ─────────────────────────────────────────────
+  kafka:
+    image: confluentinc/cp-kafka:7.6.0
+    hostname: kafka
+    container_name: kafka
+    networks: [oil-net]
+    ports:
+      - "9092:9092"
+      - "9101:9101"
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
+      CLUSTER_ID: "MkU3OEVBNTcwNTJENDM2Qk"
+      KAFKA_JMX_PORT: 9101
+      KAFKA_JMX_HOSTNAME: kafka
+    volumes:
+      - kafka-data:/var/lib/kafka/data
+    healthcheck:
+      test: ["CMD", "kafka-topics", "--bootstrap-server", "localhost:9092", "--list"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+
+  # ─────────────────────────────────────────────
+  # SCHEMA REGISTRY
+  # ─────────────────────────────────────────────
+  schema-registry:
+    image: confluentinc/cp-schema-registry:7.6.0
+    hostname: schema-registry
+    container_name: schema-registry
+    networks: [oil-net]
+    ports:
+      - "8081:8081"
+    depends_on:
+      kafka:
+        condition: service_healthy
+    environment:
+      SCHEMA_REGISTRY_HOST_NAME: schema-registry
+      SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS: kafka:9092
+      SCHEMA_REGISTRY_LISTENERS: http://0.0.0.0:8081
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8081/subjects"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  # ─────────────────────────────────────────────
+  # KAFKA UI (open source)
+  # ─────────────────────────────────────────────
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    container_name: kafka-ui
+    networks: [oil-net]
+    ports:
+      - "8080:8080"
+    depends_on:
+      kafka:
+        condition: service_healthy
+    environment:
+      KAFKA_CLUSTERS_0_NAME: oil-cluster
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:9092
+      KAFKA_CLUSTERS_0_SCHEMAREGISTRY: http://schema-registry:8081
+
+  # ─────────────────────────────────────────────
+  # TOPIC INIT
+  # ─────────────────────────────────────────────
+  topic-init:
+    image: confluentinc/cp-kafka:7.6.0
+    container_name: topic-init
+    networks: [oil-net]
+    depends_on:
+      kafka:
+        condition: service_healthy
+    entrypoint: ["/bin/bash", "/scripts/create_topics.sh"]
+    volumes:
+      - ./init_scripts:/scripts
+    restart: "no"
+
+  # ─────────────────────────────────────────────
+  # TIMESCALEDB
+  # ─────────────────────────────────────────────
+  timescaledb:
+    image: timescale/timescaledb:latest-pg15
+    container_name: timescaledb
+    networks: [oil-net]
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_DB: oildb
+      POSTGRES_USER: oiluser
+      POSTGRES_PASSWORD: oilpass
+    volumes:
+      - timescale-data:/var/lib/postgresql/data
+      - ./init_scripts/init_timescale.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U oiluser -d oildb"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # ─────────────────────────────────────────────
+  # REDIS (Valkey — OSS Redis fork)
+  # ─────────────────────────────────────────────
+  redis:
+    image: valkey/valkey:7.2
+    container_name: redis
+    networks: [oil-net]
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    command: valkey-server --save 60 1 --loglevel warning
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 5s
+      retries: 5
+
+  # ─────────────────────────────────────────────
+  # MINIO (S3-compatible object store)
+  # ─────────────────────────────────────────────
+  minio:
+    image: minio/minio:latest
+    container_name: minio
+    networks: [oil-net]
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    volumes:
+      - minio-data:/data
+    command: server /data --console-address ":9001"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      retries: 5
+
+  # ─────────────────────────────────────────────
+  # APACHE FLINK — Job Manager
+  # ─────────────────────────────────────────────
+  flink-jobmanager:
+    image: flink:1.18-scala_2.12
+    container_name: flink-jobmanager
+    networks: [oil-net]
+    ports:
+      - "8082:8081"
+    command: jobmanager
+    environment:
+      FLINK_PROPERTIES: |
+        jobmanager.rpc.address: flink-jobmanager
+        state.backend: filesystem
+        state.checkpoints.dir: file:///flink/checkpoints
+        execution.checkpointing.interval: 30s
+    volumes:
+      - flink-checkpoints:/flink/checkpoints
+      - ./flink_jobs:/flink_jobs
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8081/overview"]
+      interval: 10s
+      retries: 10
+
+  # ─────────────────────────────────────────────
+  # APACHE FLINK — Task Manager
+  # ─────────────────────────────────────────────
+  flink-taskmanager:
+    image: flink:1.18-scala_2.12
+    container_name: flink-taskmanager
+    networks: [oil-net]
+    depends_on:
+      - flink-jobmanager
+    command: taskmanager
+    environment:
+      FLINK_PROPERTIES: |
+        jobmanager.rpc.address: flink-jobmanager
+        taskmanager.numberOfTaskSlots: 4
+        state.backend: filesystem
+        state.checkpoints.dir: file:///flink/checkpoints
+    volumes:
+      - flink-checkpoints:/flink/checkpoints
+
+  # ─────────────────────────────────────────────
+  # OIL PRICE PRODUCER (Python)
+  # ─────────────────────────────────────────────
+  producer:
+    build:
+      context: ./producer
+      dockerfile: Dockerfile
+    container_name: oil-producer
+    networks: [oil-net]
+    depends_on:
+      kafka:
+        condition: service_healthy
+      schema-registry:
+        condition: service_healthy
+      topic-init:
+        condition: service_completed_successfully
+    environment:
+      KAFKA_BOOTSTRAP: kafka:9092
+      SCHEMA_REGISTRY_URL: http://schema-registry:8081
+      TICK_INTERVAL_MS: 500
+    restart: unless-stopped
+
+  # ─────────────────────────────────────────────
+  # KAFKA STREAMS PROCESSOR (Python consumer)
+  # ─────────────────────────────────────────────
+  streams-processor:
+    build:
+      context: ./kafka_streams
+      dockerfile: Dockerfile
+    container_name: streams-processor
+    networks: [oil-net]
+    depends_on:
+      kafka:
+        condition: service_healthy
+      timescaledb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      topic-init:
+        condition: service_completed_successfully
+    environment:
+      KAFKA_BOOTSTRAP: kafka:9092
+      SCHEMA_REGISTRY_URL: http://schema-registry:8081
+      TIMESCALE_DSN: postgresql://oiluser:oilpass@timescaledb:5432/oildb
+      REDIS_URL: redis://redis:6379
+    restart: unless-stopped
+
+  # ─────────────────────────────────────────────
+  # GRAFANA
+  # ─────────────────────────────────────────────
+  grafana:
+    image: grafana/grafana-oss:10.3.1
+    container_name: grafana
+    networks: [oil-net]
+    ports:
+      - "3000:3000"
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_INSTALL_PLUGINS: grafana-clock-panel
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning
+      - ./grafana/dashboards:/var/lib/grafana/dashboards
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/api/health"]
+      interval: 10s
+      retries: 10
+
+  # ─────────────────────────────────────────────
+  # APACHE SUPERSET
+  # ─────────────────────────────────────────────
+  superset:
+    image: apache/superset:3.1.0
+    container_name: superset
+    networks: [oil-net]
+    ports:
+      - "8088:8088"
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+    environment:
+      SUPERSET_SECRET_KEY: "a-very-secret-key-change-in-prod"
+      SQLALCHEMY_DATABASE_URI: "postgresql+psycopg2://oiluser:oilpass@timescaledb:5432/oildb"
+    volumes:
+      - ./superset/superset_config.py:/app/pythonpath/superset_config.py
+    command: >
+      bash -c "
+        superset db upgrade &&
+        superset fab create-admin --username admin --firstname Admin --lastname Admin --email admin@oil.com --password admin &&
+        superset init &&
+        superset run -p 8088 --with-threads --reload --debugger
+      "
