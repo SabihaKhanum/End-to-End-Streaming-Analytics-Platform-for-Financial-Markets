@@ -1,0 +1,5 @@
+confluent-kafka==2.3.0
+fastavro==1.9.4
+requests==2.31.0
+numpy==1.26.4
+python-dotenv==1.0.1
