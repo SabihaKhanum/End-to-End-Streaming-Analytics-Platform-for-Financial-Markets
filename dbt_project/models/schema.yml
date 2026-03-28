@@ -1,0 +1,79 @@
+version: 2
+
+sources:
+  - name: public
+    database: oildb
+    schema: public
+    description: "Raw oil price data from the Kafka streaming pipeline"
+    tables:
+      - name: oil_ticks
+        description: "Raw tick data from Kafka consumer sink"
+        columns:
+          - name: time
+            description: "Event timestamp (UTC)"
+            tests: [not_null]
+          - name: benchmark
+            description: "Oil benchmark: WTI, BRENT, DUBAI"
+            tests:
+              - not_null
+              - accepted_values:
+                  values: ['WTI', 'BRENT', 'DUBAI', 'URALS', 'OPEC_BASKET']
+          - name: price
+            description: "Trade price in USD per barrel"
+            tests:
+              - not_null
+              - dbt_utils.accepted_range:
+                  min_value: 0
+                  max_value: 300
+          - name: volume
+            tests: [not_null]
+
+      - name: oil_ohlcv_1m
+        description: "1-minute OHLCV candles computed by the streams processor"
+        columns:
+          - name: time
+            tests: [not_null]
+          - name: benchmark
+            tests: [not_null]
+          - name: open
+            tests: [not_null]
+          - name: close
+            tests: [not_null]
+
+      - name: oil_alerts
+        description: "Alert events from the CEP engine"
+        columns:
+          - name: time
+            tests: [not_null]
+          - name: alert_type
+            tests:
+              - accepted_values:
+                  values: ['SPIKE', 'DROP', 'SPREAD_WIDE', 'VOLATILITY']
+
+      - name: oil_volatility
+        description: "Rolling volatility metrics per benchmark"
+
+models:
+  - name: stg_oil_ticks
+    description: "Cleaned and typed oil tick data"
+    columns:
+      - name: tick_time
+        tests: [not_null]
+      - name: benchmark
+        tests: [not_null]
+      - name: price
+        tests: [not_null]
+
+  - name: oil_daily_analytics
+    description: "Daily OHLCV + volatility analytics mart"
+    columns:
+      - name: day_bucket
+        tests: [not_null]
+      - name: benchmark
+        tests: [not_null]
+
+  - name: oil_spread_analysis
+    description: "Hourly WTI/Brent/Dubai spread analysis"
+    columns:
+      - name: hour_bucket
+        tests: [not_null]

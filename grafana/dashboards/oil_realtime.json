@@ -1,0 +1,114 @@
+{
+  "uid": "oil-realtime",
+  "title": "Oil Price Real-Time Analytics",
+  "tags": ["oil", "realtime", "kafka"],
+  "timezone": "browser",
+  "refresh": "5s",
+  "time": { "from": "now-1h", "to": "now" },
+  "panels": [
+    {
+      "id": 1, "type": "stat", "title": "WTI Crude (Live)",
+      "gridPos": { "x": 0, "y": 0, "w": 6, "h": 4 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyUSD",
+          "decimals": 2,
+          "thresholds": { "mode": "absolute", "steps": [
+            { "color": "red", "value": 0 },
+            { "color": "yellow", "value": 60 },
+            { "color": "green", "value": 75 }
+          ]}
+        }
+      },
+      "targets": [{
+        "datasource": "TimescaleDB",
+        "rawSql": "SELECT NOW() as time, price FROM oil_ticks WHERE benchmark='WTI' ORDER BY time DESC LIMIT 1",
+        "format": "table"
+      }]
+    },
+    {
+      "id": 2, "type": "stat", "title": "Brent Crude (Live)",
+      "gridPos": { "x": 6, "y": 0, "w": 6, "h": 4 },
+      "fieldConfig": { "defaults": { "unit": "currencyUSD", "decimals": 2 } },
+      "targets": [{
+        "datasource": "TimescaleDB",
+        "rawSql": "SELECT NOW() as time, price FROM oil_ticks WHERE benchmark='BRENT' ORDER BY time DESC LIMIT 1",
+        "format": "table"
+      }]
+    },
+    {
+      "id": 3, "type": "stat", "title": "Dubai Crude (Live)",
+      "gridPos": { "x": 12, "y": 0, "w": 6, "h": 4 },
+      "fieldConfig": { "defaults": { "unit": "currencyUSD", "decimals": 2 } },
+      "targets": [{
+        "datasource": "TimescaleDB",
+        "rawSql": "SELECT NOW() as time, price FROM oil_ticks WHERE benchmark='DUBAI' ORDER BY time DESC LIMIT 1",
+        "format": "table"
+      }]
+    },
+    {
+      "id": 4, "type": "stat", "title": "WTI/Brent Spread",
+      "gridPos": { "x": 18, "y": 0, "w": 6, "h": 4 },
+      "fieldConfig": { "defaults": { "unit": "currencyUSD", "decimals": 2 } },
+      "targets": [{
+        "datasource": "TimescaleDB",
+        "rawSql": "SELECT NOW() as time, (wti.price - brent.price) as value FROM (SELECT price FROM oil_ticks WHERE benchmark='WTI' ORDER BY time DESC LIMIT 1) wti, (SELECT price FROM oil_ticks WHERE benchmark='BRENT' ORDER BY time DESC LIMIT 1) brent",
+        "format": "table"
+      }]
+    },
+    {
+      "id": 5, "type": "timeseries", "title": "Price History — All Benchmarks",
+      "gridPos": { "x": 0, "y": 4, "w": 16, "h": 10 },
+      "fieldConfig": { "defaults": { "unit": "currencyUSD", "custom": { "lineWidth": 2 } } },
+      "options": { "tooltip": { "mode": "multi" } },
+      "targets": [
+        {
+          "datasource": "TimescaleDB",
+          "rawSql": "SELECT time_bucket('30 seconds', time) AS time, avg(price) as WTI FROM oil_ticks WHERE benchmark='WTI' AND $__timeFilter(time) GROUP BY 1 ORDER BY 1",
+          "format": "time_series"
+        },
+        {
+          "datasource": "TimescaleDB",
+          "rawSql": "SELECT time_bucket('30 seconds', time) AS time, avg(price) as Brent FROM oil_ticks WHERE benchmark='BRENT' AND $__timeFilter(time) GROUP BY 1 ORDER BY 1",
+          "format": "time_series"
+        },
+        {
+          "datasource": "TimescaleDB",
+          "rawSql": "SELECT time_bucket('30 seconds', time) AS time, avg(price) as Dubai FROM oil_ticks WHERE benchmark='DUBAI' AND $__timeFilter(time) GROUP BY 1 ORDER BY 1",
+          "format": "time_series"
+        }
+      ]
+    },
+    {
+      "id": 6, "type": "timeseries", "title": "WTI Volatility (rolling σ)",
+      "gridPos": { "x": 16, "y": 4, "w": 8, "h": 10 },
+      "fieldConfig": { "defaults": { "unit": "short", "custom": { "fillOpacity": 15 } } },
+      "targets": [{
+        "datasource": "TimescaleDB",
+        "rawSql": "SELECT time_bucket('1 minute', time) AS time, avg(rolling_std_30) as volatility FROM oil_volatility WHERE benchmark='WTI' AND $__timeFilter(time) GROUP BY 1 ORDER BY 1",
+        "format": "time_series"
+      }]
+    },
+    {
+      "id": 7, "type": "timeseries", "title": "VWAP vs Price (WTI)",
+      "gridPos": { "x": 0, "y": 14, "w": 12, "h": 8 },
+      "targets": [
+        {
+          "datasource": "TimescaleDB",
+          "rawSql": "SELECT time, close as Price, vwap as VWAP FROM oil_ohlcv_1m WHERE benchmark='WTI' AND $__timeFilter(time) ORDER BY time",
+          "format": "time_series"
+        }
+      ]
+    },
+    {
+      "id": 8, "type": "table", "title": "Recent Alerts",
+      "gridPos": { "x": 12, "y": 14, "w": 12, "h": 8 },
+      "targets": [{
+        "datasource": "TimescaleDB",
+        "rawSql": "SELECT time, benchmark, alert_type, price, ROUND(delta_pct::NUMERIC,2) as pct, severity, message FROM oil_alerts ORDER BY time DESC LIMIT 20",
+        "format": "table"
+      }]
+    }
+  ],
+  "schemaVersion": 38
+}

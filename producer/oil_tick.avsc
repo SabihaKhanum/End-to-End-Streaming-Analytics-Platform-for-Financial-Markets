@@ -1,0 +1,71 @@
+{
+  "type": "record",
+  "name": "OilPriceTick",
+  "namespace": "com.oilpipeline",
+  "doc": "Real-time oil price tick from exchange feeds",
+  "fields": [
+    {
+      "name": "event_time",
+      "type": "long",
+      "logicalType": "timestamp-millis",
+      "doc": "Unix timestamp in milliseconds"
+    },
+    {
+      "name": "benchmark",
+      "type": {
+        "type": "enum",
+        "name": "Benchmark",
+        "symbols": ["WTI", "BRENT", "DUBAI", "URALS", "OPEC_BASKET"]
+      },
+      "doc": "Oil benchmark type"
+    },
+    {
+      "name": "exchange",
+      "type": "string",
+      "doc": "Source exchange: NYMEX, ICE, ADNOC, etc."
+    },
+    {
+      "name": "price",
+      "type": "double",
+      "doc": "Last trade price in USD per barrel"
+    },
+    {
+      "name": "volume",
+      "type": "double",
+      "doc": "Trade volume in barrels"
+    },
+    {
+      "name": "bid",
+      "type": ["null", "double"],
+      "default": null,
+      "doc": "Best bid price"
+    },
+    {
+      "name": "ask",
+      "type": ["null", "double"],
+      "default": null,
+      "doc": "Best ask price"
+    },
+    {
+      "name": "open_interest",
+      "type": ["null", "double"],
+      "default": null,
+      "doc": "Open interest for futures contracts"
+    },
+    {
+      "name": "source",
+      "type": "string",
+      "default": "simulator",
+      "doc": "Data source identifier"
+    },
+    {
+      "name": "region",
+      "type": {
+        "type": "enum",
+        "name": "Region",
+        "symbols": ["NORTH_AMERICA", "EUROPE", "MIDDLE_EAST", "ASIA_PACIFIC"]
+      },
+      "doc": "Geographic region of the exchange"
+    }
+  ]
+}
